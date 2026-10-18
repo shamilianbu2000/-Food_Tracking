@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Header, Post, Put, Query, Res } from '@nestjs/common';
 import type { Response } from "express";
 import { FoodService } from './food.service.js';
 import type { Meal } from './models.js';
@@ -17,6 +17,24 @@ export class AppController {
   async tokens(@Query('employeeId') employeeId?: string) {
     return Promise.all(this.food.list(employeeId).map((t) => this.food.withQr(t)));
   }
+
+  @Post('tokens/cancel')
+  cancel(@Body() b: { employeeId: string; tokenId: string; at?: string }) { return this.food.cancel(b.employeeId, b.tokenId, b.at); }
+
+  @Get('menu')
+  menu(@Query('from') from?: string, @Query('days') days?: string) { return this.food.menuRange(from, days ? Number(days) : 7); }
+
+  @Put('menu')
+  setMenu(@Body() b: { adminId: string; date: string; meal: Meal; items: string[] }) { return this.food.setMenu(b.adminId, b.date, b.meal, b.items); }
+
+  @Put('cutoffs')
+  setCutoff(@Body() b: { adminId: string; meal: Meal; minutes: number }) { return this.food.setCutoff(b.adminId, b.meal, b.minutes); }
+
+  @Get('history')
+  history(@Query('employeeId') employeeId: string) { return this.food.history(employeeId); }
+
+  @Get('dashboard')
+  dashboard(@Query('days') days?: string) { return this.food.dashboard(days ? Number(days) : 7); }
 
   @Post('verify')
   verify(@Body() b: { payload: string; at?: string }) { return this.food.verify(b.payload ?? '', b.at); }

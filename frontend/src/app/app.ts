@@ -10,9 +10,12 @@ import { Api } from './api';
       <h1>Corporate Food Tracking</h1>
       <nav>
         <a routerLink="/meals" routerLinkActive="on">My Meals</a>
+        <a routerLink="/history" routerLinkActive="on">History</a>
         @if (api.user()?.role === 'admin') {
           <a routerLink="/scanner" routerLinkActive="on">Scanner</a>
           <a routerLink="/admin" routerLinkActive="on">Admin Report</a>
+          <a routerLink="/dashboard" routerLinkActive="on">Dashboard</a>
+          <a routerLink="/menu-planner" routerLinkActive="on">Menu Planner</a>
         }
       </nav>
       <label>Signed in as

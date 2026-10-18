@@ -1,24 +1,145 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { randomUUID } from 'node:crypto';
 import QRCode from 'qrcode';
 import PDFDocument from 'pdfkit';
 import ExcelJS from 'exceljs';
 import {
-  EMPLOYEES, MEAL_SLOTS, Employee, Meal, Notification, QrPayload, Token, VerifyResult,
+  DEFAULT_CUTOFF_MINUTES, DayMenu, EMPLOYEES, MEAL_SLOTS, SEED_MENU, Employee, Meal, Notification, QrPayload, Token, TokenStatus, VerifyResult,
 } from './models.js';
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 const nowHm = (): string => new Date().toTimeString().slice(0, 5);
+const HM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const addDays = (date: string, n: number): string => {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const toMinutes = (hm: string): number => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
+const toHm = (m: number): string => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 @Injectable()
 export class FoodService {
   private readonly log = new Logger(FoodService.name);
   private tokens = new Map<string, Token>();
   private notifications: Notification[] = [];
+  private menu = new Map<string, DayMenu>();
+  private cutoffs: Record<Meal, number> = { BREAKFAST: DEFAULT_CUTOFF_MINUTES, LUNCH: DEFAULT_CUTOFF_MINUTES, DINNER: DEFAULT_CUTOFF_MINUTES };
+
+  constructor() { this.seed(); }
+
+  /** Seeds a menu for the current week (Mon-Sun) and a few days of token history. */
+  private seed(): void {
+    const t = today();
+    const dow = (new Date(`${t}T00:00:00Z`).getUTCDay() + 6) % 7; // Monday = 0
+    const monday = addDays(t, -dow);
+    SEED_MENU.forEach((m, i) => this.menu.set(addDays(monday, i), structuredClone(m)));
+    const workers = EMPLOYEES.filter((e) => e.role === 'employee');
+    for (let back = 1; back <= 5; back++) {
+      const date = addDays(t, -back);
+      workers.forEach((e, ei) => MEAL_SLOTS.forEach((s, si) => {
+        if ((back + ei + si) % 4 === 0) return; // not everyone books every meal
+        const issued = (back * 3 + ei * 5 + si * 7) % 5 !== 0; // some left unused -> expired
+        const token: Token = { tokenId: randomUUID(), employeeId: e.id, meal: s.meal, date, issued };
+        if (issued) token.issuedAt = `${date}T${s.start}:00.000Z`;
+        this.tokens.set(token.tokenId, token);
+      }));
+    }
+  }
 
   employees(): Employee[] { return EMPLOYEES; }
-  meals() { return MEAL_SLOTS; }
+  meals() { return MEAL_SLOTS.map((s) => ({ ...s, cutoffMinutes: this.cutoffs[s.meal], cancelBy: toHm(toMinutes(s.start) - this.cutoffs[s.meal]) })); }
+
+  // ---- weekly menu ----
+  menuRange(from?: string, days = 7): { date: string; menu: DayMenu }[] {
+    if (from !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new BadRequestException('from must be YYYY-MM-DD');
+    const start = from ?? this.weekStart();
+    return Array.from({ length: Math.min(Math.max(days, 1), 31) }, (_, i) => {
+      const date = addDays(start, i);
+      return { date, menu: this.menu.get(date) ?? { BREAKFAST: [], LUNCH: [], DINNER: [] } };
+    });
+  }
+
+  private weekStart(): string {
+    const t = today();
+    return addDays(t, -((new Date(`${t}T00:00:00Z`).getUTCDay() + 6) % 7));
+  }
+
+  private requireAdmin(adminId?: string): void {
+    const e = EMPLOYEES.find((x) => x.id === adminId);
+    if (!e) throw new NotFoundException(`Unknown employee ${adminId}`);
+    if (e.role !== 'admin') throw new ForbiddenException('Admin only.');
+  }
+
+  setMenu(adminId: string, date: string, meal: Meal, items: string[]) {
+    this.requireAdmin(adminId);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '') || Number.isNaN(Date.parse(date))) throw new BadRequestException('date must be YYYY-MM-DD');
+    if (!MEAL_SLOTS.some((s) => s.meal === meal)) throw new BadRequestException('Invalid meal');
+    if (!Array.isArray(items) || items.some((i) => typeof i !== 'string')) throw new BadRequestException('items must be a string array');
+    const day = this.menu.get(date) ?? { BREAKFAST: [], LUNCH: [], DINNER: [] };
+    day[meal] = items.map((i) => i.trim()).filter(Boolean);
+    this.menu.set(date, day);
+    return { date, menu: day };
+  }
+
+  setCutoff(adminId: string, meal: Meal, minutes: number) {
+    this.requireAdmin(adminId);
+    if (!MEAL_SLOTS.some((s) => s.meal === meal)) throw new BadRequestException('Invalid meal');
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > 720) throw new BadRequestException('minutes must be an integer 0-720');
+    this.cutoffs[meal] = minutes;
+    return this.meals();
+  }
+
+  // ---- cancel ----
+  cancel(employeeId: string, tokenId: string, at?: string): { cancelled: true; tokenId: string; meal: Meal } {
+    this.employee(employeeId);
+    if (at !== undefined && !HM.test(at)) throw new BadRequestException('at must be HH:mm');
+    const token = this.tokens.get(tokenId);
+    if (!token) throw new NotFoundException('Token not found.');
+    if (token.employeeId !== employeeId) throw new ForbiddenException('You can only cancel your own token.');
+    if (token.issued) throw new BadRequestException('Token already issued; it cannot be cancelled.');
+    if (token.date !== today()) throw new BadRequestException(`Token was for ${token.date}; it cannot be cancelled.`);
+    const slot = MEAL_SLOTS.find((s) => s.meal === token.meal)!;
+    const cancelBy = toHm(Math.max(0, toMinutes(slot.start) - this.cutoffs[token.meal]));
+    const time = at ?? nowHm();
+    if (time >= cancelBy) {
+      throw new BadRequestException(`Cancellation cutoff passed: ${token.meal} can be cancelled only before ${cancelBy} (${this.cutoffs[token.meal]} min before ${slot.start}); it is ${time}.`);
+    }
+    this.tokens.delete(tokenId);
+    this.notify(employeeId, `Your ${token.meal.toLowerCase()} booking for ${token.date} was cancelled.`);
+    return { cancelled: true, tokenId, meal: token.meal };
+  }
+
+  // ---- history & dashboard ----
+  private statusOf(t: Token): TokenStatus {
+    if (t.issued) return 'issued';
+    return t.date < today() ? 'expired' : 'unused';
+  }
+
+  history(employeeId: string) {
+    this.employee(employeeId);
+    return [...this.tokens.values()]
+      .filter((t) => t.employeeId === employeeId)
+      .sort((a, b) => b.date.localeCompare(a.date) || MEAL_SLOTS.findIndex((s) => s.meal === b.meal) - MEAL_SLOTS.findIndex((s) => s.meal === a.meal))
+      .map((t) => ({ tokenId: t.tokenId, date: t.date, meal: t.meal, status: this.statusOf(t), issuedAt: t.issuedAt }));
+  }
+
+  /** Booked / issued / unused counts per meal and per day over the last `days` days (ending today). */
+  dashboard(days = 7) {
+    const n = Math.min(Math.max(Number.isFinite(days) ? Math.floor(days) : 7, 1), 31);
+    const dates = Array.from({ length: n }, (_, i) => addDays(today(), i - n + 1));
+    const count = (ts: Token[]) => { const issued = ts.filter((t) => t.issued).length; return { booked: ts.length, issued, unused: ts.length - issued }; };
+    const inRange = [...this.tokens.values()].filter((t) => dates.includes(t.date));
+    return {
+      from: dates[0], to: dates[n - 1],
+      perMeal: MEAL_SLOTS.map((s) => ({ meal: s.meal, ...count(inRange.filter((t) => t.meal === s.meal)) })),
+      perDay: dates.map((date) => ({
+        date, ...count(inRange.filter((t) => t.date === date)),
+        byMeal: MEAL_SLOTS.map((s) => ({ meal: s.meal, ...count(inRange.filter((t) => t.date === date && t.meal === s.meal)) })),
+      })),
+    };
+  }
 
   private employee(id: string): Employee {
     const e = EMPLOYEES.find((x) => x.id === id);

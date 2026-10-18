@@ -3,7 +3,16 @@ import { HttpClient } from '@angular/common/http';
 
 export type Meal = 'BREAKFAST' | 'LUNCH' | 'DINNER';
 export interface Employee { id: string; name: string; department: string; role: 'employee' | 'admin' }
-export interface MealSlot { meal: Meal; start: string; end: string }
+export interface MealSlot { meal: Meal; start: string; end: string; cutoffMinutes?: number; cancelBy?: string }
+export interface DayMenu { BREAKFAST: string[]; LUNCH: string[]; DINNER: string[] }
+export interface MenuDay { date: string; menu: DayMenu }
+export interface HistoryRow { tokenId: string; date: string; meal: Meal; status: 'issued' | 'unused' | 'expired'; issuedAt?: string }
+export interface Counts { booked: number; issued: number; unused: number }
+export interface Dashboard {
+  from: string; to: string;
+  perMeal: ({ meal: Meal } & Counts)[];
+  perDay: ({ date: string; byMeal: ({ meal: Meal } & Counts)[] } & Counts)[];
+}
 export interface TokenQr { tokenId: string; employeeId: string; meal: Meal; date: string; issued: boolean; issuedAt?: string; payload: string; qr: string }
 export interface VerifyResult { status: string; message: string; employee?: Employee }
 export interface ReportRow { tokenId: string; employeeId: string; employee: string; department: string; meal: Meal; date: string; issued: boolean; issuedAt?: string }
@@ -55,5 +64,11 @@ export class Api {
   book(employeeId: string, meal: Meal) { return this.http.post<TokenQr>(`${API}/tokens/book`, { employeeId, meal }); }
   verify(payload: string, at?: string) { return this.http.post<VerifyResult>(`${API}/verify`, { payload, at: at || undefined }); }
   runDaily() { return this.http.post<{ generated: number; total: number }>(`${API}/jobs/daily`, {}); }
+  cancel(employeeId: string, tokenId: string, at?: string) { return this.http.post<{ cancelled: boolean }>(`${API}/tokens/cancel`, { employeeId, tokenId, at: at || undefined }); }
+  menu(from?: string, days = 7) { return this.http.get<MenuDay[]>(`${API}/menu`, { params: from ? { from, days } : { days } }); }
+  setMenu(adminId: string, date: string, meal: Meal, items: string[]) { return this.http.put<MenuDay>(`${API}/menu`, { adminId, date, meal, items }); }
+  setCutoff(adminId: string, meal: Meal, minutes: number) { return this.http.put<MealSlot[]>(`${API}/cutoffs`, { adminId, meal, minutes }); }
+  history(employeeId: string) { return this.http.get<HistoryRow[]>(`${API}/history`, { params: { employeeId } }); }
+  dashboard(days = 7) { return this.http.get<Dashboard>(`${API}/dashboard`, { params: { days } }); }
   report() { return this.http.get<ReportRow[]>(`${API}/reports/tokens`); }
 }

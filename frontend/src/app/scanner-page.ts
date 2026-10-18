@@ -35,6 +35,10 @@ export class ScannerPage {
   constructor() { this.refresh(); }
   private refresh(): void { this.api.tokens().subscribe((t) => this.tokens.set(t)); }
   protected verify(): void {
-    this.api.verify(this.payload, this.at).subscribe((r) => { this.result.set(r); this.refresh(); });
+    if (!this.payload.trim()) { this.result.set({ status: 'INVALID', message: 'Paste a QR payload or pick a token first.' }); return; }
+    this.api.verify(this.payload, this.at.trim()).subscribe({
+      next: (r) => { this.result.set(r); this.refresh(); },
+      error: (e) => this.result.set({ status: 'ERROR', message: e.error?.message ?? 'Verification request failed' }),
+    });
   }
 }

@@ -1,5 +1,5 @@
-import { Component, effect, inject, signal } from '@angular/core';
-import { Api, MealSlot, MenuDay, TokenQr } from './api';
+import { Component, OnDestroy, effect, inject, signal } from '@angular/core';
+import { Api, localToday, MealSlot, MenuDay, TokenQr } from './api';
 
 @Component({
   selector: 'app-meals',
@@ -38,21 +38,23 @@ import { Api, MealSlot, MenuDay, TokenQr } from './api';
     </table>
   `,
 })
-export class MealsPage {
+export class MealsPage implements OnDestroy {
   protected api = inject(Api);
   protected slots = signal<MealSlot[]>([]);
   private tokens = signal<TokenQr[]>([]);
   protected at = signal('');
   protected week = signal<MenuDay[]>([]);
-  protected todayStr = signal(new Date().toISOString().slice(0, 10));
+  protected todayStr = signal(localToday());
   protected todayMenu = () => this.week().find((d) => d.date === this.todayStr())?.menu;
 
   constructor() {
     this.api.meals().subscribe((s) => this.slots.set(s));
     this.api.menu().subscribe((w) => this.week.set(w));
     effect(() => { this.load(); });
-    setInterval(() => this.load(), 3000);
+    this.timer = setInterval(() => this.load(), 3000);
   }
+  private timer?: ReturnType<typeof setInterval>;
+  ngOnDestroy(): void { clearInterval(this.timer); }
 
   private load(): void {
     const u = this.api.user();
@@ -60,7 +62,7 @@ export class MealsPage {
   }
   protected tokenFor(meal: string): TokenQr | undefined { return this.tokens().find((t) => t.meal === meal); }
   protected book(s: MealSlot): void {
-    this.api.book(this.api.user()!.id, s.meal).subscribe(() => this.load());
+    this.api.book(this.api.user()!.id, s.meal).subscribe({ next: () => this.load(), error: (e) => this.api.toast(e.error?.message ?? 'Booking failed') });
   }
   protected cancel(t: TokenQr): void {
     this.api.cancel(this.api.user()!.id, t.tokenId, this.at().trim()).subscribe({

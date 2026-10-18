@@ -28,3 +28,9 @@ tr.today td { background: #fff7d6; }
 .bar-label { font-size: .75rem; margin-top: .3rem; }
 .booked { background: #1f3a5f; } .issued { background: #0a7a35; } .unused { background: #d98e04; }
 .legend .sw { display: inline-block; width: .8rem; height: .8rem; margin: 0 .3rem 0 .8rem; vertical-align: middle; }
+.banner { background: #e8f0fe; color: #1f3a5f; padding: .6rem 1.5rem; font-size: .9rem; border-bottom: 1px solid #c5d6f5; }
+nav a { white-space: nowrap; }
+.actions { align-items: flex-end; }
+.actions label { display: block; }
+.actions input { width: auto; min-width: 12rem; }
+td input { min-width: 9rem; }

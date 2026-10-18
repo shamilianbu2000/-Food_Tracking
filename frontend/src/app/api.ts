@@ -19,6 +19,11 @@ export interface ReportRow { tokenId: string; employeeId: string; employee: stri
 export interface Note { id: number; employeeId: string; message: string }
 export interface Toast { id: number; text: string }
 
+export const localToday = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 export const API = 'http://localhost:3002/api';
 
 @Injectable({ providedIn: 'root' })
@@ -27,18 +32,23 @@ export class Api {
   readonly employees = signal<Employee[]>([]);
   readonly user = signal<Employee | null>(null);
   readonly toasts = signal<Toast[]>([]);
+  readonly ready = signal(false);
   private lastNote = 0;
   private timer?: ReturnType<typeof setInterval>;
 
   init(): void {
     this.http.get<Employee[]>(`${API}/employees`).subscribe((list) => {
       this.employees.set(list);
-      this.switchUser(list[0].id);
+      let saved: string | null = null;
+      try { saved = localStorage.getItem('demoUser'); } catch { /* storage unavailable */ }
+      this.switchUser(list.find((e) => e.id === saved)?.id ?? list[0].id);
+      this.ready.set(true);
     });
   }
 
   switchUser(id: string): void {
     this.user.set(this.employees().find((e) => e.id === id) ?? null);
+    try { localStorage.setItem('demoUser', id); } catch { /* storage unavailable */ }
     this.lastNote = 0;
     clearInterval(this.timer);
     this.poll();

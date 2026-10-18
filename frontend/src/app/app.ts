@@ -1,5 +1,5 @@
 import { Component, inject, OnInit } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { Api } from './api';
 
 @Component({
@@ -19,13 +19,23 @@ import { Api } from './api';
         }
       </nav>
       <label>Signed in as
-        <select (change)="api.switchUser($any($event.target).value)">
+        <select (change)="switch($any($event.target).value)">
           @for (e of api.employees(); track e.id) {
-            <option [value]="e.id">{{ e.name }} ({{ e.role }})</option>
+            <option [value]="e.id" [selected]="e.id === api.user()?.id">{{ e.name }} ({{ e.role }})</option>
           }
         </select>
       </label>
     </header>
+    <div class="banner">
+      <strong>Demo app, mock sign-in.</strong>
+      Use <em>Signed in as</em> (top right) to switch between employees and Admin Frank.
+      @if (api.user()?.role === 'admin') {
+        You are an <b>admin</b>: run the daily job under Admin Report, verify QR tokens on Scanner, see Dashboard and edit the Menu Planner.
+      } @else {
+        You are an <b>employee</b>: get a QR token for each meal below, cancel it before the cutoff, and check History.
+        Switch to <b>Admin Frank</b> to generate tokens for everyone and scan them.
+      }
+    </div>
     <main><router-outlet /></main>
     <div class="toasts">
       @for (t of api.toasts(); track t.id) { <div class="toast">{{ t.text }}</div> }
@@ -34,5 +44,10 @@ import { Api } from './api';
 })
 export class App implements OnInit {
   protected api = inject(Api);
+  private router = inject(Router);
   ngOnInit(): void { this.api.init(); }
+  protected switch(id: string): void {
+    this.api.switchUser(id);
+    if (this.api.user()?.role !== 'admin' && /^\/(scanner|admin|dashboard|menu-planner)/.test(this.router.url)) this.router.navigateByUrl('/meals');
+  }
 }

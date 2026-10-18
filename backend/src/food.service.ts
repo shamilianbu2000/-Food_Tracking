@@ -8,7 +8,9 @@ import {
   DEFAULT_CUTOFF_MINUTES, DayMenu, EMPLOYEES, MEAL_SLOTS, SEED_MENU, Employee, Meal, Notification, QrPayload, Token, TokenStatus, VerifyResult,
 } from './models.js';
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+/** Local calendar date (same clock as nowHm, so date and time never disagree around midnight/UTC offsets). */
+const today = (): string => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
 const nowHm = (): string => new Date().toTimeString().slice(0, 5);
 const HM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const addDays = (date: string, n: number): string => {
@@ -197,6 +199,7 @@ export class FoodService {
     const employee = this.employee(token.employeeId);
     if (token.date !== today()) return { status: 'EXPIRED', message: `Token was for ${token.date}.`, token, employee };
     if (token.issued) return { status: 'ALREADY_USED', message: `Already issued at ${token.issuedAt}.`, token, employee };
+    if (at !== undefined && !HM.test(at)) return { status: 'INVALID', message: 'Simulated time must be HH:mm (e.g. 13:00).' };
     const time = at ?? nowHm();
     const slot = MEAL_SLOTS.find((s) => s.meal === token.meal)!;
     if (time < slot.start || time > slot.end) {
